@@ -64,6 +64,49 @@ npx expo run:android
 npx expo run:ios
 ```
 
+### 5. Build a release APK
+
+Release builds embed the JS bundle and `.env` values at build time.
+
+```bash
+# from project root
+cd android
+gradlew.bat assembleRelease
+```
+
+APK output:
+
+`android/app/build/outputs/apk/release/app-release.apk`
+
+Important for release:
+- MediaPipe ships **arm64-v8a only**. On x86 emulators / 32-bit devices the app auto-uses mock mode so the release APK does not crash on open
+- Use `EXPO_PUBLIC_MOCK_POSE=true` to force mock mode; leave empty for auto-detect on arm64 phones
+- After changing `.env` or native deps, rebuild the release APK (Metro reload is not enough)
+- Output: `android/app/build/outputs/apk/release/app-release.apk`
+
+## Emulator testing
+
+MediaPipe native libraries only support **arm64** phones, so x86 Android emulators cannot run real pose detection.
+
+On emulators, the app automatically switches to **Emulator test mode**:
+- Simulated push-up pose data (no camera / MediaPipe)
+- Full rep counter, form validation, and Supabase sync still work
+- Toggle **Pose overlay** to see the simulated skeleton
+
+To force mock mode on a real device (optional):
+
+```env
+EXPO_PUBLIC_MOCK_POSE=true
+```
+
+To force real camera mode:
+
+```env
+EXPO_PUBLIC_MOCK_POSE=false
+```
+
+Restart Metro after changing `.env`.
+
 ## Usage
 
 1. Open the app and grant camera permission

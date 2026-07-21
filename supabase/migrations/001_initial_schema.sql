@@ -52,6 +52,10 @@ create policy "Allow anonymous update workout_sessions"
   on public.workout_sessions for update
   using (true);
 
+create policy "Allow anonymous delete workout_sessions"
+  on public.workout_sessions for delete
+  using (true);
+
 create policy "Allow anonymous read rep_records"
   on public.rep_records for select
   using (true);
@@ -59,3 +63,7 @@ create policy "Allow anonymous read rep_records"
 create policy "Allow anonymous insert rep_records"
   on public.rep_records for insert
   with check (true);
+
+create policy "Allow anonymous delete rep_records"
+  on public.rep_records for delete
+  using (true);

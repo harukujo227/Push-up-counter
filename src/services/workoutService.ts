@@ -139,6 +139,41 @@ export class WorkoutService {
 
     return data ?? [];
   }
+
+  async deleteSession(sessionId: string): Promise<boolean> {
+    if (!supabase) return false;
+
+    const deviceId = await getDeviceId();
+    const { error } = await supabase
+      .from('workout_sessions')
+      .delete()
+      .eq('id', sessionId)
+      .eq('device_id', deviceId);
+
+    if (error) {
+      console.warn('Failed to delete session:', error.message);
+      return false;
+    }
+
+    return true;
+  }
+
+  async clearAllSessions(): Promise<boolean> {
+    if (!supabase) return false;
+
+    const deviceId = await getDeviceId();
+    const { error } = await supabase
+      .from('workout_sessions')
+      .delete()
+      .eq('device_id', deviceId);
+
+    if (error) {
+      console.warn('Failed to clear sessions:', error.message);
+      return false;
+    }
+
+    return true;
+  }
 }
 
 export const workoutService = new WorkoutService();
