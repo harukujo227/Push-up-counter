@@ -86,26 +86,31 @@ Important for release:
 
 ## Emulator testing
 
-MediaPipe native libraries only support **arm64** phones, so x86 Android emulators cannot run real pose detection.
+MediaPipe native libraries only support **arm64** phones. PC emulators like **LDPlayer**, BlueStacks, and Android Studio AVDs usually:
 
-On emulators, the app automatically switches to **Emulator test mode**:
+- run on **x86/x86_64** (cannot load MediaPipe `.so`)
+- expose a broken or missing virtual camera
+
+So on those environments the app **auto-switches to Emulator test mode**:
 - Simulated push-up pose data (no camera / MediaPipe)
 - Full rep counter, form validation, and Supabase sync still work
 - Toggle **Pose overlay** to see the simulated skeleton
 
-To force mock mode on a real device (optional):
+If a camera still fails to open, the app falls back to mock mode automatically (or tap **Use emulator test mode**).
+
+To force mock mode:
 
 ```env
 EXPO_PUBLIC_MOCK_POSE=true
 ```
 
-To force real camera mode:
+To force real camera mode (real **arm64** phone only):
 
 ```env
 EXPO_PUBLIC_MOCK_POSE=false
 ```
 
-Restart Metro after changing `.env`.
+Restart Metro after changing `.env`. For release APKs, rebuild after changing `.env`.
 
 ## Usage
 

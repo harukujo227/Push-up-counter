@@ -75,7 +75,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'space-between',
     padding: 20,
-    paddingTop: 56,
+    paddingTop: 96,
     paddingBottom: 40,
   },
   modeBadge: {

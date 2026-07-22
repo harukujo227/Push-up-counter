@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   LayoutChangeEvent,
@@ -10,6 +10,7 @@ import {
 import {
   Camera,
   useCameraDevice,
+  useCameraDevices,
   useCameraPermission,
   useFrameProcessor,
 } from 'react-native-vision-camera';
@@ -25,6 +26,7 @@ import { WorkoutSessionOverlay } from './WorkoutSessionOverlay';
 
 interface NativeWorkoutCameraProps {
   showDebug?: boolean;
+  onUnavailable?: (reason: string) => void;
 }
 
 function mapMediaPipeLandmarks(
@@ -38,9 +40,16 @@ function mapMediaPipeLandmarks(
   }));
 }
 
-export function NativeWorkoutCamera({ showDebug = false }: NativeWorkoutCameraProps) {
-  const { hasPermission, requestPermission } = useCameraPermission();
-  const device = useCameraDevice('front');
+/** Only mounts MediaPipe/VisionCamera after the user opts into camera mode. */
+function ActiveNativeCamera({
+  showDebug = false,
+  onUnavailable,
+}: NativeWorkoutCameraProps) {
+  const devices = useCameraDevices();
+  const frontDevice = useCameraDevice('front');
+  const backDevice = useCameraDevice('back');
+  const device = frontDevice ?? backDevice ?? devices[0] ?? null;
+
   const [layout, setLayout] = useState({ width: 0, height: 0 });
   const [sessionActive, setSessionActive] = useState(false);
   const [detectorError, setDetectorError] = useState<string | null>(null);
@@ -71,6 +80,7 @@ export function NativeWorkoutCamera({ showDebug = false }: NativeWorkoutCameraPr
             : 'Pose detector failed';
         setDetectorError(message);
         setSessionActive(false);
+        onUnavailable?.(message);
       },
     },
     RunningMode.LIVE_STREAM,
@@ -91,10 +101,12 @@ export function NativeWorkoutCamera({ showDebug = false }: NativeWorkoutCameraPr
   }, []);
 
   useEffect(() => {
-    if (!hasPermission) {
-      requestPermission();
-    }
-  }, [hasPermission, requestPermission]);
+    if (device) return;
+    const timer = setTimeout(() => {
+      onUnavailable?.('No usable camera found. Use emulator test mode on LDPlayer.');
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [device, onUnavailable]);
 
   const handleStart = useCallback(async () => {
     reset();
@@ -107,24 +119,21 @@ export function NativeWorkoutCamera({ showDebug = false }: NativeWorkoutCameraPr
     setSessionActive(false);
   }, [endSession]);
 
-  const statusText = useMemo(() => {
-    if (detectorError) return `Pose detection error: ${detectorError}`;
-    if (!hasPermission) return 'Camera permission required';
-    if (!device) return 'No camera device found';
-    return null;
-  }, [detectorError, device, hasPermission]);
-
-  if (statusText) {
+  if (detectorError || !device) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.statusText}>{statusText}</Text>
-        {!hasPermission && !detectorError ? (
-          <Pressable style={styles.button} onPress={requestPermission}>
-            <Text style={styles.buttonText}>Grant camera access</Text>
+        <Text style={styles.statusText}>
+          {detectorError ? `Pose detection error: ${detectorError}` : 'Looking for camera…'}
+        </Text>
+        {!detectorError ? <ActivityIndicator color="#4ade80" style={{ marginTop: 16 }} /> : null}
+        {onUnavailable ? (
+          <Pressable
+            style={[styles.button, styles.secondaryButton]}
+            onPress={() => onUnavailable(detectorError ?? 'No camera device')}
+          >
+            <Text style={styles.secondaryButtonText}>Use emulator test mode</Text>
           </Pressable>
-        ) : detectorError ? null : (
-          <ActivityIndicator color="#4ade80" style={{ marginTop: 16 }} />
-        )}
+        ) : null}
       </View>
     );
   }
@@ -133,20 +142,18 @@ export function NativeWorkoutCamera({ showDebug = false }: NativeWorkoutCameraPr
     <View style={styles.root} onLayout={onLayout}>
       <Camera
         style={StyleSheet.absoluteFill}
-        device={device!}
+        device={device}
         isActive={sessionActive}
         pixelFormat="rgb"
         frameProcessor={sessionActive ? frameProcessor : undefined}
         onLayout={poseDetection.cameraViewLayoutChangeHandler}
       />
-
       <PoseOverlay
         landmarks={landmarks}
         width={layout.width}
         height={layout.height}
         visible={showDebug && sessionActive}
       />
-
       <WorkoutSessionOverlay
         repCount={state.repCount}
         phase={state.phase}
@@ -163,35 +170,97 @@ export function NativeWorkoutCamera({ showDebug = false }: NativeWorkoutCameraPr
   );
 }
 
+export function NativeWorkoutCamera({
+  showDebug = false,
+  onUnavailable,
+}: NativeWorkoutCameraProps) {
+  const { hasPermission, requestPermission } = useCameraPermission();
+  const [wantsCamera, setWantsCamera] = useState(false);
+  const [requesting, setRequesting] = useState(false);
+
+  const handleEnableCamera = useCallback(async () => {
+    setRequesting(true);
+    try {
+      const granted = await requestPermission();
+      if (!granted) {
+        onUnavailable?.('Camera permission denied. Use emulator test mode instead.');
+        return;
+      }
+      setWantsCamera(true);
+    } catch (error) {
+      onUnavailable?.(error instanceof Error ? error.message : 'Camera permission failed');
+    } finally {
+      setRequesting(false);
+    }
+  }, [onUnavailable, requestPermission]);
+
+  if (hasPermission && wantsCamera) {
+    return <ActiveNativeCamera showDebug={showDebug} onUnavailable={onUnavailable} />;
+  }
+
+  return (
+    <View style={styles.centered}>
+      <Text style={styles.title}>Camera mode</Text>
+      <Text style={styles.statusText}>
+        On LDPlayer, do not use “Turn on Camera” (PC webcam) — it crashes the app. Use emulator
+        test mode to try the workout flow.
+      </Text>
+      <Pressable
+        style={[styles.button, requesting && styles.buttonDisabled]}
+        onPress={handleEnableCamera}
+        disabled={requesting}
+      >
+        <Text style={styles.buttonText}>
+          {requesting ? 'Requesting…' : 'Enable phone camera'}
+        </Text>
+      </Pressable>
+      {onUnavailable ? (
+        <Pressable
+          style={[styles.button, styles.secondaryButton]}
+          onPress={() =>
+            onUnavailable('Using emulator test mode. Tap Start workout for simulated reps.')
+          }
+        >
+          <Text style={styles.secondaryButtonText}>Use emulator test mode</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: '#0a0a0f',
-  },
+  root: { flex: 1, backgroundColor: '#0a0a0f' },
   centered: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#0a0a0f',
     padding: 24,
+    gap: 8,
   },
+  title: { color: '#ffffff', fontSize: 22, fontWeight: '800', marginBottom: 4 },
   statusText: {
     color: '#c8c8d4',
-    fontSize: 16,
+    fontSize: 15,
     textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 8,
   },
   button: {
     paddingHorizontal: 28,
     paddingVertical: 14,
     borderRadius: 999,
-    minWidth: 160,
+    minWidth: 220,
     alignItems: 'center',
     backgroundColor: '#4ade80',
-    marginTop: 16,
+    marginTop: 12,
   },
-  buttonText: {
-    color: '#0a0a0f',
-    fontSize: 16,
-    fontWeight: '800',
+  buttonDisabled: { opacity: 0.6 },
+  buttonText: { color: '#0a0a0f', fontSize: 16, fontWeight: '800' },
+  secondaryButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: 'rgba(74,222,128,0.45)',
   },
+  secondaryButtonText: { color: '#4ade80', fontSize: 14, fontWeight: '700' },
 });

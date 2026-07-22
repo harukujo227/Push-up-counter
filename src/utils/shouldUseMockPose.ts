@@ -10,46 +10,111 @@ function parseBooleanEnv(value: string | undefined | null): boolean | null {
   return null;
 }
 
-function isAndroidEmulator(): boolean {
-  if (Platform.OS !== 'android') return false;
+type AndroidConstants = {
+  Model?: string;
+  Brand?: string;
+  Manufacturer?: string;
+  Fingerprint?: string;
+  Hardware?: string;
+  Product?: string;
+  Device?: string;
+  Board?: string;
+  Host?: string;
+  Serial?: string;
+  SupportedAbis?: string[];
+};
 
-  const constants = Platform.constants as {
-    Model?: string;
-    Brand?: string;
-    Manufacturer?: string;
-    Fingerprint?: string;
-  };
+function getAndroidConstants(): AndroidConstants {
+  return (Platform.constants ?? {}) as AndroidConstants;
+}
 
-  const fingerprint = [
-    constants.Manufacturer,
-    constants.Brand,
-    constants.Model,
-    constants.Fingerprint,
+function getAndroidIdentityBlob(): string {
+  const c = getAndroidConstants();
+  return [
+    c.Manufacturer,
+    c.Brand,
+    c.Model,
+    c.Fingerprint,
+    c.Hardware,
+    c.Product,
+    c.Device,
+    c.Board,
+    c.Host,
+    c.Serial,
+    Device.brand,
+    Device.manufacturer,
+    Device.modelName,
+    Device.designName,
+    Device.productName,
   ]
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
-
-  return (
-    fingerprint.includes('emulator') ||
-    fingerprint.includes('sdk_gphone') ||
-    fingerprint.includes('android sdk built for x86') ||
-    fingerprint.includes('google_sdk') ||
-    fingerprint.includes('generic')
-  );
 }
 
-/** MediaPipe posedetection ships native libs for arm64-v8a only. */
+function isAndroidEmulator(): boolean {
+  if (Platform.OS !== 'android') return false;
+
+  const c = getAndroidConstants();
+  const blob = getAndroidIdentityBlob();
+  const markers = [
+    'emulator',
+    'sdk_gphone',
+    'android sdk built for x86',
+    'google_sdk',
+    'generic_x86',
+    'generic',
+    'ldplayer',
+    'changxiang',
+    'ttvm',
+    'tiantian',
+    'vbox86',
+    'android_x86',
+    'goldfish',
+    'ranchu',
+    'nox',
+    'bluestacks',
+    'bst_x86',
+    'mumu',
+    'memu',
+    'genymotion',
+    'andyroid',
+    'droid4x',
+    'microvirt',
+    'asus_z01qd',
+    'sm-g975n',
+    'sm-g975f',
+  ];
+
+  if (markers.some((m) => blob.includes(m))) return true;
+
+  const hardware = String(c.Hardware ?? '').toLowerCase();
+  if (
+    hardware.includes('x86') ||
+    hardware.includes('vbox') ||
+    hardware.includes('intel') ||
+    hardware.includes('amd')
+  ) {
+    return true;
+  }
+
+  const host = String(c.Host ?? '').toLowerCase();
+  const device = String(c.Device ?? Device.designName ?? '').toLowerCase();
+  if (host.includes('ubuntu') && (device === 'aosp' || device.includes('generic'))) {
+    return true;
+  }
+
+  return false;
+}
+
 function lacksMediaPipeNativeSupport(): boolean {
   if (Platform.OS !== 'android') return false;
 
-  const abis =
-    (Platform.constants as { SupportedAbis?: string[] }).SupportedAbis ?? [];
+  const abis = getAndroidConstants().SupportedAbis ?? [];
+  if (abis.length === 0) return isAndroidEmulator();
 
-  if (abis.length === 0) {
-    return isAndroidEmulator();
-  }
-
+  if (abis[0] === 'x86' || abis[0] === 'x86_64') return true;
+  if (abis.includes('x86') || abis.includes('x86_64')) return true;
   return !abis.includes('arm64-v8a');
 }
 
@@ -61,22 +126,29 @@ function readMockPoseOverride(): boolean | null {
   );
 }
 
-/**
- * Prefer mock pose whenever MediaPipe cannot run.
- * Importing react-native-mediapipe-posedetection on unsupported ABIs
- * (x86 emulators, 32-bit ARM) crashes the release process.
- */
+/** True when the app should use simulated poses (safe for LDPlayer / emulators). */
 export function shouldUseMockPose(): boolean {
+  const override = readMockPoseOverride();
+  if (override === true) return true;
+
   if (lacksMediaPipeNativeSupport()) return true;
   if (isAndroidEmulator()) return true;
   if (!Device.isDevice) return true;
 
-  const override = readMockPoseOverride();
-  if (override != null) return override;
-
+  if (override === false) return false;
   return false;
 }
 
 export function getPoseModeLabel(): string {
   return shouldUseMockPose() ? 'Emulator test mode' : 'Camera mode';
+}
+
+export function getMockPoseReason(): string | null {
+  if (readMockPoseOverride() === true) {
+    return 'Test mode is on. Tap Start workout — reps are simulated (no camera needed).';
+  }
+  if (lacksMediaPipeNativeSupport() || isAndroidEmulator() || !Device.isDevice) {
+    return 'Emulator/LDPlayer detected. Tap Start workout — reps are simulated (no camera needed).';
+  }
+  return null;
 }

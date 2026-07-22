@@ -1,16 +1,20 @@
 import { Link } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, StatusBar, StyleSheet, Switch, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WorkoutCamera } from '../src/components/WorkoutCamera';
 
 export default function WorkoutScreen() {
   const [showDebug, setShowDebug] = useState(false);
+  const insets = useSafeAreaInsets();
+  // Keep controls at least 30px below the top / status bar.
+  const topOffset = Math.max(insets.top, StatusBar.currentHeight ?? 0) + 30;
 
   return (
     <View style={styles.container}>
       <WorkoutCamera showDebug={showDebug} />
 
-      <View style={styles.toolbar}>
+      <View style={[styles.toolbar, { top: topOffset }]}>
         <View style={styles.debugToggle}>
           <Text style={styles.debugLabel}>Pose overlay</Text>
           <Switch
@@ -37,7 +41,6 @@ const styles = StyleSheet.create({
   },
   toolbar: {
     position: 'absolute',
-    top: 8,
     right: 16,
     left: 16,
     flexDirection: 'row',

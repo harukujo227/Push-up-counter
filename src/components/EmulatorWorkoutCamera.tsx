@@ -53,8 +53,8 @@ export function EmulatorWorkoutCamera({
         <Text style={styles.mockTitle}>Simulated push-ups</Text>
         <Text style={styles.mockSubtitle}>
           {nativeFallbackReason
-            ? `Native pose detection is unavailable (${nativeFallbackReason}). Using simulated reps for testing.`
-            : 'Emulator mode — no camera or MediaPipe required. Reps are generated automatically for testing.'}
+            ? nativeFallbackReason
+            : 'Emulator test mode — no camera needed. Tap Start workout; reps count automatically.'}
         </Text>
       </View>
 
