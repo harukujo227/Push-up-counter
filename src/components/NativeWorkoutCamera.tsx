@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   LayoutChangeEvent,
@@ -13,11 +13,11 @@ import {
   useCameraDevices,
   useCameraPermission,
 } from 'react-native-vision-camera';
-import { useRunOnJS } from 'react-native-worklets-core';
 import {
   usePoseDetection,
   RunningMode,
   Delegate,
+  type ViewCoordinator,
 } from 'react-native-mediapipe-posedetection';
 import { usePushUpDetection } from '../hooks/usePushUpDetection';
 import type { PoseLandmark } from '../detection';
@@ -29,15 +29,66 @@ interface NativeWorkoutCameraProps {
   onUnavailable?: (reason: string) => void;
 }
 
-function mapMediaPipeLandmarks(
-  raw: Array<{ x: number; y: number; z?: number; visibility?: number; presence?: number }>,
-): PoseLandmark[] {
+type RawLandmark = {
+  x: number;
+  y: number;
+  z?: number;
+  visibility?: number;
+  presence?: number;
+};
+
+/**
+ * Native MediaPipe events look like:
+ *   { results: [{ landmarks: [ PoseLandmark[] ] }], inputImageWidth, ... }
+ * (not a flat `landmarks` field — the package README is outdated).
+ */
+function extractFirstPose(
+  bundle: {
+    results?: Array<{ landmarks?: RawLandmark[][] }>;
+    landmarks?: RawLandmark[][];
+  } | null | undefined,
+): RawLandmark[] | null {
+  const nested = bundle?.results?.[0]?.landmarks?.[0];
+  if (nested && nested.length > 0) return nested;
+
+  // Fallback for older / docs-shaped payloads
+  const flat = bundle?.landmarks?.[0];
+  if (flat && flat.length > 0) return flat;
+
+  return null;
+}
+
+function mapMediaPipeLandmarks(raw: RawLandmark[]): PoseLandmark[] {
   return raw.map((point) => ({
     x: point.x,
     y: point.y,
     z: point.z ?? 0,
     visibility: point.visibility ?? point.presence ?? 1,
   }));
+}
+
+function projectLandmarksForOverlay(
+  raw: RawLandmark[],
+  viewCoordinator: ViewCoordinator,
+  frameDims: { width: number; height: number },
+  viewDims: { width: number; height: number },
+): PoseLandmark[] {
+  if (viewDims.width <= 0 || viewDims.height <= 0) {
+    return mapMediaPipeLandmarks(raw);
+  }
+
+  return raw.map((point) => {
+    const projected = viewCoordinator.convertPoint(frameDims, {
+      x: point.x,
+      y: point.y,
+    });
+    return {
+      x: projected.x / viewDims.width,
+      y: projected.y / viewDims.height,
+      z: point.z ?? 0,
+      visibility: point.visibility ?? point.presence ?? 1,
+    };
+  });
 }
 
 /** Only mounts MediaPipe/VisionCamera after the user opts into camera mode. */
@@ -51,6 +102,8 @@ function ActiveNativeCamera({
   const device = frontDevice ?? backDevice ?? devices[0] ?? null;
 
   const [layout, setLayout] = useState({ width: 0, height: 0 });
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
   const [sessionActive, setSessionActive] = useState(false);
   const [detectorError, setDetectorError] = useState<string | null>(null);
 
@@ -62,35 +115,84 @@ function ActiveNativeCamera({
     reset,
     startSession,
     endSession,
-  } = usePushUpDetection({ persistToSupabase: true });
+  } = usePushUpDetection({
+    persistToSupabase: true,
+    // Slightly looser than defaults — phone cameras foreshorten elbow angles.
+    config: {
+      minConfidence: 0.35,
+      elbowTopAngle: 145,
+      elbowBottomAngle: 105,
+      minBodyStraightness: 135,
+      hysteresisDegrees: 12,
+      formScoreThreshold: 0.45,
+    },
+  });
 
-  const onLandmarks = useRunOnJS(processLandmarks, [processLandmarks]);
+  const onUnavailableRef = useRef(onUnavailable);
+  onUnavailableRef.current = onUnavailable;
+
+  const poseCallbacks = useMemo(
+    () => ({
+      onResults: (
+        bundle: {
+          results?: Array<{ landmarks?: RawLandmark[][] }>;
+          landmarks?: RawLandmark[][];
+          inputImageWidth?: number;
+          inputImageHeight?: number;
+        },
+        viewCoordinator: ViewCoordinator,
+      ) => {
+        const firstPose = extractFirstPose(bundle);
+        if (!firstPose) return;
+
+        // Detection uses image-normalized landmarks (angles are view-independent).
+        const detectionLandmarks = mapMediaPipeLandmarks(firstPose);
+
+        // Overlay uses view-projected coords so the skeleton lines up with the preview.
+        const currentLayout = layoutRef.current;
+        let overlayLandmarks = detectionLandmarks;
+        if (currentLayout.width > 0 && currentLayout.height > 0) {
+          const frameDims = viewCoordinator.getFrameDims({
+            inferenceTime: 0,
+            inputImageWidth: bundle.inputImageWidth ?? 1,
+            inputImageHeight: bundle.inputImageHeight ?? 1,
+          });
+          overlayLandmarks = projectLandmarksForOverlay(
+            firstPose,
+            viewCoordinator,
+            frameDims,
+            currentLayout,
+          );
+        }
+
+        processLandmarks(detectionLandmarks, overlayLandmarks);
+      },
+      onError: (error: { message?: string }) => {
+        const message =
+          typeof error === 'object' && error && 'message' in error
+            ? String(error.message)
+            : 'Pose detector failed';
+        setDetectorError(message);
+        setSessionActive(false);
+        onUnavailableRef.current?.(message);
+      },
+    }),
+    [processLandmarks],
+  );
 
   // CPU avoids GPU-thread crashes on many Android devices; pass MediaPipe's
   // frameProcessor directly (do not wrap/call it — it is not a function).
   const poseDetection = usePoseDetection(
-    {
-      onResults: (results) => {
-        const firstPose = results?.landmarks?.[0];
-        if (!firstPose) return;
-        onLandmarks(mapMediaPipeLandmarks(firstPose));
-      },
-      onError: (error) => {
-        const message =
-          typeof error === 'object' && error && 'message' in error
-            ? String((error as { message?: string }).message)
-            : 'Pose detector failed';
-        setDetectorError(message);
-        setSessionActive(false);
-        onUnavailable?.(message);
-      },
-    },
+    poseCallbacks,
     RunningMode.LIVE_STREAM,
     'pose_landmarker_lite.task',
     {
       delegate: Delegate.CPU,
       fpsMode: 15,
       numPoses: 1,
+      minPoseDetectionConfidence: 0.4,
+      minPosePresenceConfidence: 0.4,
+      minTrackingConfidence: 0.4,
     },
   );
 
@@ -100,10 +202,19 @@ function ActiveNativeCamera({
     }
   }, [device, poseDetection.cameraDeviceChangeHandler]);
 
-  const onLayout = useCallback((event: LayoutChangeEvent) => {
+  const onRootLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     setLayout({ width, height });
   }, []);
+
+  const onCameraLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      poseDetection.cameraViewLayoutChangeHandler(event);
+      const { width, height } = event.nativeEvent.layout;
+      setLayout({ width, height });
+    },
+    [poseDetection],
+  );
 
   useEffect(() => {
     if (device) return;
@@ -144,14 +255,14 @@ function ActiveNativeCamera({
   }
 
   return (
-    <View style={styles.root} onLayout={onLayout}>
+    <View style={styles.root} onLayout={onRootLayout}>
       <Camera
         style={StyleSheet.absoluteFill}
         device={device}
         isActive={sessionActive}
         pixelFormat="rgb"
         frameProcessor={sessionActive ? poseDetection.frameProcessor : undefined}
-        onLayout={poseDetection.cameraViewLayoutChangeHandler}
+        onLayout={onCameraLayout}
         onOutputOrientationChanged={poseDetection.cameraOrientationChangedHandler}
       />
       <PoseOverlay

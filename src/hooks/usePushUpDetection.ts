@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   PushUpDetector,
   type InvalidRepEvent,
   type PoseLandmark,
-  type PushUpDetectorCallbacks,
   type PushUpDetectorConfig,
   type PushUpDetectorState,
   type RepEvent,
@@ -28,41 +27,47 @@ export function usePushUpDetection(options: UsePushUpDetectionOptions = {}) {
   const [landmarks, setLandmarks] = useState<PoseLandmark[]>([]);
   const [lastFeedback, setLastFeedback] = useState<string | null>(null);
   const detectorRef = useRef<PushUpDetector | null>(null);
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
-  const callbacks = useMemo<PushUpDetectorCallbacks>(
-    () => ({
-      onStateUpdate: setState,
-      onRepCompleted: async (event) => {
-        setLastFeedback('Good rep!');
-        options.onRepCompleted?.(event);
-        if (options.persistToSupabase !== false) {
-          await workoutService.recordValidRep(event);
-        }
-      },
-      onInvalidRep: async (event) => {
-        setLastFeedback(event.reason);
-        options.onInvalidRep?.(event);
-        if (options.persistToSupabase !== false) {
-          await workoutService.recordInvalidRep(event);
-        }
-      },
-      onPoseLost: () => setLastFeedback('Move into frame — side view works best.'),
-      onPoseFound: () => setLastFeedback(null),
-    }),
-    [options],
-  );
+  // Keep config identity stable unless values actually change.
+  const configKey = JSON.stringify(options.config ?? {});
 
   useEffect(() => {
-    detectorRef.current = new PushUpDetector(callbacks, options.config);
+    detectorRef.current = new PushUpDetector(
+      {
+        onStateUpdate: setState,
+        onRepCompleted: async (event) => {
+          setLastFeedback('Good rep!');
+          optionsRef.current.onRepCompleted?.(event);
+          if (optionsRef.current.persistToSupabase !== false) {
+            await workoutService.recordValidRep(event);
+          }
+        },
+        onInvalidRep: async (event) => {
+          setLastFeedback(event.reason);
+          optionsRef.current.onInvalidRep?.(event);
+          if (optionsRef.current.persistToSupabase !== false) {
+            await workoutService.recordInvalidRep(event);
+          }
+        },
+        onPoseLost: () => setLastFeedback('Move into frame — side view works best.'),
+        onPoseFound: () => setLastFeedback(null),
+      },
+      optionsRef.current.config,
+    );
     return () => {
       detectorRef.current = null;
     };
-  }, [callbacks, options.config]);
+  }, [configKey]);
 
-  const processLandmarks = useCallback((nextLandmarks: PoseLandmark[]) => {
-    setLandmarks(nextLandmarks);
-    detectorRef.current?.processFrame(nextLandmarks, Date.now());
-  }, []);
+  const processLandmarks = useCallback(
+    (detectionLandmarks: PoseLandmark[], overlayLandmarks?: PoseLandmark[]) => {
+      setLandmarks(overlayLandmarks ?? detectionLandmarks);
+      detectorRef.current?.processFrame(detectionLandmarks, Date.now());
+    },
+    [],
+  );
 
   const reset = useCallback(() => {
     detectorRef.current?.reset();
@@ -71,14 +76,14 @@ export function usePushUpDetection(options: UsePushUpDetectionOptions = {}) {
   }, []);
 
   const startSession = useCallback(async () => {
-    if (options.persistToSupabase === false) return null;
+    if (optionsRef.current.persistToSupabase === false) return null;
     return workoutService.startSession();
-  }, [options.persistToSupabase]);
+  }, []);
 
   const endSession = useCallback(async () => {
-    if (options.persistToSupabase === false) return null;
+    if (optionsRef.current.persistToSupabase === false) return null;
     return workoutService.endSession();
-  }, [options.persistToSupabase]);
+  }, []);
 
   return {
     state,

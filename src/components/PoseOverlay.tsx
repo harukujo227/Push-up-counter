@@ -18,7 +18,12 @@ export function PoseOverlay({ landmarks, width, height, visible }: PoseOverlayPr
   const toY = (y: number) => y * height;
 
   return (
-    <Svg width={width} height={height} style={{ position: 'absolute', top: 0, left: 0 }}>
+    <Svg
+      width={width}
+      height={height}
+      pointerEvents="none"
+      style={{ position: 'absolute', top: 0, left: 0, zIndex: 5 }}
+    >
       {SKELETON_CONNECTIONS.map(([from, to]) => {
         const a = landmarks[from];
         const b = landmarks[to];

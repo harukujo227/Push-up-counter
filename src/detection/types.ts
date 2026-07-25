@@ -89,6 +89,7 @@ export interface PushUpDetectorConfig {
   minMovementDurationMs: number;
   repCooldownMs: number;
   hysteresisDegrees: number;
+  formScoreThreshold: number;
 }
 
 export const DEFAULT_DETECTOR_CONFIG: PushUpDetectorConfig = {
@@ -100,4 +101,5 @@ export const DEFAULT_DETECTOR_CONFIG: PushUpDetectorConfig = {
   minMovementDurationMs: 200,
   repCooldownMs: 800,
   hysteresisDegrees: 8,
+  formScoreThreshold: 0.55,
 };

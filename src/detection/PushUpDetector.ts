@@ -172,7 +172,10 @@ export class PushUpDetector {
     }
 
     const formScore = this.computeFormScore();
-    const isValidRep = this.bottomFormValid && this.topFormValid && formScore >= 0.55;
+    const isValidRep =
+      this.bottomFormValid &&
+      this.topFormValid &&
+      formScore >= this.config.formScoreThreshold;
 
     if (isValidRep) {
       this.repCount += 1;
