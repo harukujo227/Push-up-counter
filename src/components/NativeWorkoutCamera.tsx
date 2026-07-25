@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   LayoutChangeEvent,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -12,6 +13,7 @@ import {
   useCameraDevice,
   useCameraDevices,
   useCameraPermission,
+  type Orientation,
 } from 'react-native-vision-camera';
 import {
   usePoseDetection,
@@ -23,6 +25,28 @@ import { usePushUpDetection } from '../hooks/usePushUpDetection';
 import type { PoseLandmark } from '../detection';
 import { PoseOverlay } from './PoseOverlay';
 import { WorkoutSessionOverlay } from './WorkoutSessionOverlay';
+
+/** Degrees to rotate preview so the stream appears upright. */
+function previewRotationDegrees(
+  previewOrientation: Orientation,
+  uiRotation: number,
+): number {
+  switch (previewOrientation) {
+    case 'portrait-upside-down':
+      return 180;
+    case 'landscape-left':
+      return 90;
+    case 'landscape-right':
+      return 270;
+    default: {
+      const normalized = ((Math.round(uiRotation / 90) * 90) % 360 + 360) % 360;
+      if (normalized !== 0) return normalized;
+      // Many Android devices/emulators deliver a visually inverted buffer while
+      // still reporting portrait. Correct it so preview + pose stay upright.
+      return Platform.OS === 'android' ? 180 : 0;
+    }
+  }
+}
 
 interface NativeWorkoutCameraProps {
   showDebug?: boolean;
@@ -106,6 +130,18 @@ function ActiveNativeCamera({
   layoutRef.current = layout;
   const [sessionActive, setSessionActive] = useState(false);
   const [detectorError, setDetectorError] = useState<string | null>(null);
+  const [previewOrientation, setPreviewOrientation] =
+    useState<Orientation>('portrait');
+  const [uiRotation, setUiRotation] = useState(0);
+
+  const previewRotateDeg = previewRotationDegrees(previewOrientation, uiRotation);
+  const previewTransformStyle = useMemo(
+    () =>
+      previewRotateDeg === 0
+        ? null
+        : { transform: [{ rotate: `${previewRotateDeg}deg` as const }] },
+    [previewRotateDeg],
+  );
 
   const {
     state,
@@ -180,6 +216,12 @@ function ActiveNativeCamera({
     [processLandmarks],
   );
 
+  // When we apply a 180° preview correction, treat both camera and output as
+  // upside-down so MediaPipe rotates frames for inference and the overlay
+  // projection stays identity (landmarks already match the upright preview).
+  const forceOrientation =
+    previewRotateDeg === 180 ? ('portrait-upside-down' as const) : undefined;
+
   // CPU avoids GPU-thread crashes on many Android devices; pass MediaPipe's
   // frameProcessor directly (do not wrap/call it — it is not a function).
   const poseDetection = usePoseDetection(
@@ -193,6 +235,8 @@ function ActiveNativeCamera({
       minPoseDetectionConfidence: 0.4,
       minPosePresenceConfidence: 0.4,
       minTrackingConfidence: 0.4,
+      forceOutputOrientation: forceOrientation,
+      forceCameraOrientation: forceOrientation,
     },
   );
 
@@ -201,6 +245,10 @@ function ActiveNativeCamera({
       poseDetection.cameraDeviceChangeHandler(device);
     }
   }, [device, poseDetection.cameraDeviceChangeHandler]);
+
+  useEffect(() => {
+    poseDetection.resizeModeChangeHandler('cover');
+  }, [poseDetection.resizeModeChangeHandler]);
 
   const onRootLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -212,6 +260,21 @@ function ActiveNativeCamera({
       poseDetection.cameraViewLayoutChangeHandler(event);
       const { width, height } = event.nativeEvent.layout;
       setLayout({ width, height });
+    },
+    [poseDetection],
+  );
+
+  const onPreviewOrientationChanged = useCallback(
+    (orientation: Orientation) => {
+      setPreviewOrientation(orientation);
+      poseDetection.cameraOrientationChangedHandler(orientation);
+    },
+    [poseDetection],
+  );
+
+  const onOutputOrientationChanged = useCallback(
+    (orientation: Orientation) => {
+      poseDetection.cameraOrientationChangedHandler(orientation);
     },
     [poseDetection],
   );
@@ -256,15 +319,25 @@ function ActiveNativeCamera({
 
   return (
     <View style={styles.root} onLayout={onRootLayout}>
-      <Camera
-        style={StyleSheet.absoluteFill}
-        device={device}
-        isActive={sessionActive}
-        pixelFormat="rgb"
-        frameProcessor={sessionActive ? poseDetection.frameProcessor : undefined}
-        onLayout={onCameraLayout}
-        onOutputOrientationChanged={poseDetection.cameraOrientationChangedHandler}
-      />
+      {/* TextureView + optional rotate fixes inverted Android previews.
+          Keep PoseOverlay outside so session UI coords stay upright; MediaPipe
+          forceOrientation keeps skeleton aligned with the corrected preview. */}
+      <View style={[StyleSheet.absoluteFill, previewTransformStyle]} pointerEvents="none">
+        <Camera
+          style={StyleSheet.absoluteFill}
+          device={device}
+          isActive={sessionActive}
+          pixelFormat="rgb"
+          resizeMode="cover"
+          androidPreviewViewType="texture-view"
+          outputOrientation="preview"
+          frameProcessor={sessionActive ? poseDetection.frameProcessor : undefined}
+          onLayout={onCameraLayout}
+          onOutputOrientationChanged={onOutputOrientationChanged}
+          onPreviewOrientationChanged={onPreviewOrientationChanged}
+          onUIRotationChanged={setUiRotation}
+        />
+      </View>
       <PoseOverlay
         landmarks={landmarks}
         width={layout.width}

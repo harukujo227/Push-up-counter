@@ -1,0 +1,17 @@
+diff --git a/node_modules/react-native-mediapipe-posedetection/android/src/main/java/com/mediapipeposedetection/posedetection/PoseDetectorHelper.kt b/node_modules/react-native-mediapipe-posedetection/android/src/main/java/com/mediapipeposedetection/posedetection/PoseDetectorHelper.kt
+index b8b3841..0f30cbf 100644
+--- a/node_modules/react-native-mediapipe-posedetection/android/src/main/java/com/mediapipeposedetection/posedetection/PoseDetectorHelper.kt
++++ b/node_modules/react-native-mediapipe-posedetection/android/src/main/java/com/mediapipeposedetection/posedetection/PoseDetectorHelper.kt
+@@ -235,10 +235,8 @@ class PoseDetectorHelper(
+       )
+     }
+     val frameTime = SystemClock.uptimeMillis()
+-    // this is a hack bc we use this in the callback and it might have changed
+-//    this.imageRotation = orientationToDegrees(orientation)
+-    this.imageRotation = orientationToDegrees(Orientation.PORTRAIT)
+-    //    this.imageRotation = 90
++    // Honor the orientation from JS so inverted Android previews (180°) still detect.
++    this.imageRotation = orientationToDegrees(orientation)
+     detectAsync(mpImage, frameTime, this.imageRotation)
+   }
+ 

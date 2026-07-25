@@ -8,7 +8,8 @@
     "ios": "expo run:ios",
     "prebuild": "expo prebuild",
     "lint": "expo lint",
-    "build:android:release": "cd android && set NODE_ENV=production&& gradlew.bat assembleRelease"
+    "build:android:release": "cd android && set NODE_ENV=production&& gradlew.bat assembleRelease",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.1.2",
@@ -36,6 +37,7 @@
   "devDependencies": {
     "@babel/core": "^7.25.2",
     "@types/react": "~19.0.10",
+    "patch-package": "^8.0.1",
     "typescript": "~5.8.3"
   },
   "private": true
