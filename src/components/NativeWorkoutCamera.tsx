@@ -12,12 +12,12 @@ import {
   useCameraDevice,
   useCameraDevices,
   useCameraPermission,
-  useFrameProcessor,
 } from 'react-native-vision-camera';
 import { useRunOnJS } from 'react-native-worklets-core';
 import {
   usePoseDetection,
   RunningMode,
+  Delegate,
 } from 'react-native-mediapipe-posedetection';
 import { usePushUpDetection } from '../hooks/usePushUpDetection';
 import type { PoseLandmark } from '../detection';
@@ -66,6 +66,8 @@ function ActiveNativeCamera({
 
   const onLandmarks = useRunOnJS(processLandmarks, [processLandmarks]);
 
+  // CPU avoids GPU-thread crashes on many Android devices; pass MediaPipe's
+  // frameProcessor directly (do not wrap/call it — it is not a function).
   const poseDetection = usePoseDetection(
     {
       onResults: (results) => {
@@ -85,15 +87,18 @@ function ActiveNativeCamera({
     },
     RunningMode.LIVE_STREAM,
     'pose_landmarker_lite.task',
+    {
+      delegate: Delegate.CPU,
+      fpsMode: 15,
+      numPoses: 1,
+    },
   );
 
-  const frameProcessor = useFrameProcessor(
-    (frame) => {
-      'worklet';
-      poseDetection.frameProcessor(frame);
-    },
-    [poseDetection.frameProcessor],
-  );
+  useEffect(() => {
+    if (device) {
+      poseDetection.cameraDeviceChangeHandler(device);
+    }
+  }, [device, poseDetection.cameraDeviceChangeHandler]);
 
   const onLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -145,8 +150,9 @@ function ActiveNativeCamera({
         device={device}
         isActive={sessionActive}
         pixelFormat="rgb"
-        frameProcessor={sessionActive ? frameProcessor : undefined}
+        frameProcessor={sessionActive ? poseDetection.frameProcessor : undefined}
         onLayout={poseDetection.cameraViewLayoutChangeHandler}
+        onOutputOrientationChanged={poseDetection.cameraOrientationChangedHandler}
       />
       <PoseOverlay
         landmarks={landmarks}
