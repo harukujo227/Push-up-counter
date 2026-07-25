@@ -26,26 +26,47 @@ import type { PoseLandmark } from '../detection';
 import { PoseOverlay } from './PoseOverlay';
 import { WorkoutSessionOverlay } from './WorkoutSessionOverlay';
 
-/** Degrees to rotate preview so the stream appears upright. */
-function previewRotationDegrees(
+type PreviewCorrection =
+  | { kind: 'none' }
+  | { kind: 'flipY' } // upright without swapping left/right
+  | { kind: 'rotate'; degrees: 90 | 270 };
+
+/**
+ * Preview correction so the stream appears upright.
+ * Use scaleY (not rotate 180°) for inversion — rotate 180 also mirrors left/right.
+ */
+function getPreviewCorrection(
   previewOrientation: Orientation,
   uiRotation: number,
-): number {
+): PreviewCorrection {
   switch (previewOrientation) {
     case 'portrait-upside-down':
-      return 180;
+      return { kind: 'flipY' };
     case 'landscape-left':
-      return 90;
+      return { kind: 'rotate', degrees: 90 };
     case 'landscape-right':
-      return 270;
+      return { kind: 'rotate', degrees: 270 };
     default: {
       const normalized = ((Math.round(uiRotation / 90) * 90) % 360 + 360) % 360;
-      if (normalized !== 0) return normalized;
-      // Many Android devices/emulators deliver a visually inverted buffer while
-      // still reporting portrait. Correct it so preview + pose stay upright.
-      return Platform.OS === 'android' ? 180 : 0;
+      if (normalized === 180) return { kind: 'flipY' };
+      if (normalized === 90 || normalized === 270) {
+        return { kind: 'rotate', degrees: normalized };
+      }
+      // Android often delivers an inverted buffer while still reporting portrait.
+      if (Platform.OS === 'android') return { kind: 'flipY' };
+      return { kind: 'none' };
     }
   }
+}
+
+function previewTransformFor(correction: PreviewCorrection) {
+  if (correction.kind === 'flipY') {
+    return { transform: [{ scaleY: -1 as const }] };
+  }
+  if (correction.kind === 'rotate') {
+    return { transform: [{ rotate: `${correction.degrees}deg` as const }] };
+  }
+  return null;
 }
 
 interface NativeWorkoutCameraProps {
@@ -134,14 +155,14 @@ function ActiveNativeCamera({
     useState<Orientation>('portrait');
   const [uiRotation, setUiRotation] = useState(0);
 
-  const previewRotateDeg = previewRotationDegrees(previewOrientation, uiRotation);
+  const previewCorrection = getPreviewCorrection(previewOrientation, uiRotation);
+  const previewCorrectionRef = useRef(previewCorrection);
+  previewCorrectionRef.current = previewCorrection;
   const previewTransformStyle = useMemo(
-    () =>
-      previewRotateDeg === 0
-        ? null
-        : { transform: [{ rotate: `${previewRotateDeg}deg` as const }] },
-    [previewRotateDeg],
+    () => previewTransformFor(previewCorrection),
+    [previewCorrection],
   );
+  const needsUpsideDownInference = previewCorrection.kind === 'flipY';
 
   const {
     state,
@@ -201,6 +222,14 @@ function ActiveNativeCamera({
           );
         }
 
+        // MediaPipe 180° rotation mirrors X vs a scaleY-only preview fix — undo that.
+        if (previewCorrectionRef.current.kind === 'flipY') {
+          overlayLandmarks = overlayLandmarks.map((point) => ({
+            ...point,
+            x: 1 - point.x,
+          }));
+        }
+
         processLandmarks(detectionLandmarks, overlayLandmarks);
       },
       onError: (error: { message?: string }) => {
@@ -216,11 +245,11 @@ function ActiveNativeCamera({
     [processLandmarks],
   );
 
-  // When we apply a 180° preview correction, treat both camera and output as
-  // upside-down so MediaPipe rotates frames for inference and the overlay
-  // projection stays identity (landmarks already match the upright preview).
-  const forceOrientation =
-    previewRotateDeg === 180 ? ('portrait-upside-down' as const) : undefined;
+  // When preview is vertically flipped, ask MediaPipe to rotate frames 180° for
+  // inference. Overlay X is mirrored separately to match scaleY (not rotate 180).
+  const forceOrientation = needsUpsideDownInference
+    ? ('portrait-upside-down' as const)
+    : undefined;
 
   // CPU avoids GPU-thread crashes on many Android devices; pass MediaPipe's
   // frameProcessor directly (do not wrap/call it — it is not a function).
@@ -319,9 +348,8 @@ function ActiveNativeCamera({
 
   return (
     <View style={styles.root} onLayout={onRootLayout}>
-      {/* TextureView + optional rotate fixes inverted Android previews.
-          Keep PoseOverlay outside so session UI coords stay upright; MediaPipe
-          forceOrientation keeps skeleton aligned with the corrected preview. */}
+      {/* TextureView + scaleY flip fixes inverted Android previews without
+          swapping left/right (unlike rotate 180°). Session UI stays upright. */}
       <View style={[StyleSheet.absoluteFill, previewTransformStyle]} pointerEvents="none">
         <Camera
           style={StyleSheet.absoluteFill}

@@ -12,7 +12,7 @@ const config: ExpoConfig = {
   splash: {
     image: './assets/splash-icon.png',
     resizeMode: 'contain',
-    backgroundColor: '#0a0a0f',
+    backgroundColor: '#000000',
   },
   ios: {
     supportsTablet: true,
@@ -25,10 +25,13 @@ const config: ExpoConfig = {
   android: {
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',
-      backgroundColor: '#0a0a0f',
+      backgroundColor: '#000000',
     },
     package: 'com.pushup.counter',
     permissions: ['android.permission.CAMERA'],
+  },
+  web: {
+    favicon: './assets/favicon.png',
   },
   plugins: [
     'expo-router',
