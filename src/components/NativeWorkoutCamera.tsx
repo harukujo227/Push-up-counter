@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   LayoutChangeEvent,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -25,49 +24,6 @@ import { usePushUpDetection } from '../hooks/usePushUpDetection';
 import type { PoseLandmark } from '../detection';
 import { PoseOverlay } from './PoseOverlay';
 import { WorkoutSessionOverlay } from './WorkoutSessionOverlay';
-
-type PreviewCorrection =
-  | { kind: 'none' }
-  | { kind: 'flipY' } // upright without swapping left/right
-  | { kind: 'rotate'; degrees: 90 | 270 };
-
-/**
- * Preview correction so the stream appears upright.
- * Use scaleY (not rotate 180°) for inversion — rotate 180 also mirrors left/right.
- */
-function getPreviewCorrection(
-  previewOrientation: Orientation,
-  uiRotation: number,
-): PreviewCorrection {
-  switch (previewOrientation) {
-    case 'portrait-upside-down':
-      return { kind: 'flipY' };
-    case 'landscape-left':
-      return { kind: 'rotate', degrees: 90 };
-    case 'landscape-right':
-      return { kind: 'rotate', degrees: 270 };
-    default: {
-      const normalized = ((Math.round(uiRotation / 90) * 90) % 360 + 360) % 360;
-      if (normalized === 180) return { kind: 'flipY' };
-      if (normalized === 90 || normalized === 270) {
-        return { kind: 'rotate', degrees: normalized };
-      }
-      // Android often delivers an inverted buffer while still reporting portrait.
-      if (Platform.OS === 'android') return { kind: 'flipY' };
-      return { kind: 'none' };
-    }
-  }
-}
-
-function previewTransformFor(correction: PreviewCorrection) {
-  if (correction.kind === 'flipY') {
-    return { transform: [{ scaleY: -1 as const }] };
-  }
-  if (correction.kind === 'rotate') {
-    return { transform: [{ rotate: `${correction.degrees}deg` as const }] };
-  }
-  return null;
-}
 
 interface NativeWorkoutCameraProps {
   showDebug?: boolean;
@@ -151,18 +107,6 @@ function ActiveNativeCamera({
   layoutRef.current = layout;
   const [sessionActive, setSessionActive] = useState(false);
   const [detectorError, setDetectorError] = useState<string | null>(null);
-  const [previewOrientation, setPreviewOrientation] =
-    useState<Orientation>('portrait');
-  const [uiRotation, setUiRotation] = useState(0);
-
-  const previewCorrection = getPreviewCorrection(previewOrientation, uiRotation);
-  const previewCorrectionRef = useRef(previewCorrection);
-  previewCorrectionRef.current = previewCorrection;
-  const previewTransformStyle = useMemo(
-    () => previewTransformFor(previewCorrection),
-    [previewCorrection],
-  );
-  const needsUpsideDownInference = previewCorrection.kind === 'flipY';
 
   const {
     state,
@@ -222,14 +166,6 @@ function ActiveNativeCamera({
           );
         }
 
-        // MediaPipe 180° rotation mirrors X vs a scaleY-only preview fix — undo that.
-        if (previewCorrectionRef.current.kind === 'flipY') {
-          overlayLandmarks = overlayLandmarks.map((point) => ({
-            ...point,
-            x: 1 - point.x,
-          }));
-        }
-
         processLandmarks(detectionLandmarks, overlayLandmarks);
       },
       onError: (error: { message?: string }) => {
@@ -245,12 +181,6 @@ function ActiveNativeCamera({
     [processLandmarks],
   );
 
-  // When preview is vertically flipped, ask MediaPipe to rotate frames 180° for
-  // inference. Overlay X is mirrored separately to match scaleY (not rotate 180).
-  const forceOrientation = needsUpsideDownInference
-    ? ('portrait-upside-down' as const)
-    : undefined;
-
   // CPU avoids GPU-thread crashes on many Android devices; pass MediaPipe's
   // frameProcessor directly (do not wrap/call it — it is not a function).
   const poseDetection = usePoseDetection(
@@ -264,8 +194,8 @@ function ActiveNativeCamera({
       minPoseDetectionConfidence: 0.4,
       minPosePresenceConfidence: 0.4,
       minTrackingConfidence: 0.4,
-      forceOutputOrientation: forceOrientation,
-      forceCameraOrientation: forceOrientation,
+      // Match front-camera mirroring so skeleton lines up with the preview.
+      mirrorMode: 'mirror-front-only',
     },
   );
 
@@ -293,15 +223,7 @@ function ActiveNativeCamera({
     [poseDetection],
   );
 
-  const onPreviewOrientationChanged = useCallback(
-    (orientation: Orientation) => {
-      setPreviewOrientation(orientation);
-      poseDetection.cameraOrientationChangedHandler(orientation);
-    },
-    [poseDetection],
-  );
-
-  const onOutputOrientationChanged = useCallback(
+  const syncOrientation = useCallback(
     (orientation: Orientation) => {
       poseDetection.cameraOrientationChangedHandler(orientation);
     },
@@ -348,24 +270,20 @@ function ActiveNativeCamera({
 
   return (
     <View style={styles.root} onLayout={onRootLayout}>
-      {/* TextureView + scaleY flip fixes inverted Android previews without
-          swapping left/right (unlike rotate 180°). Session UI stays upright. */}
-      <View style={[StyleSheet.absoluteFill, previewTransformStyle]} pointerEvents="none">
-        <Camera
-          style={StyleSheet.absoluteFill}
-          device={device}
-          isActive={sessionActive}
-          pixelFormat="rgb"
-          resizeMode="cover"
-          androidPreviewViewType="texture-view"
-          outputOrientation="preview"
-          frameProcessor={sessionActive ? poseDetection.frameProcessor : undefined}
-          onLayout={onCameraLayout}
-          onOutputOrientationChanged={onOutputOrientationChanged}
-          onPreviewOrientationChanged={onPreviewOrientationChanged}
-          onUIRotationChanged={setUiRotation}
-        />
-      </View>
+      <Camera
+        style={StyleSheet.absoluteFill}
+        device={device}
+        isActive={sessionActive}
+        pixelFormat="rgb"
+        resizeMode="cover"
+        // TextureView applies sensor rotation correctly; SurfaceView often does not.
+        androidPreviewViewType="texture-view"
+        outputOrientation="preview"
+        frameProcessor={sessionActive ? poseDetection.frameProcessor : undefined}
+        onLayout={onCameraLayout}
+        onOutputOrientationChanged={syncOrientation}
+        onPreviewOrientationChanged={syncOrientation}
+      />
       <PoseOverlay
         landmarks={landmarks}
         width={layout.width}

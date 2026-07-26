@@ -2,7 +2,6 @@
 
 React Native mobile app for real-time push-up detection, rep counting, and form validation. Uses **MediaPipe BlazePose** (33 landmarks) on-device via the camera, with **Supabase** for workout session storage.
 
-Inspired by the MVP brief in `message (2).txt` and architecture in `Technology.txt`.
 
 ## Features
 
@@ -186,6 +185,3 @@ assets/models/        MediaPipe .task model file
 - Side or slightly angled camera view works best
 - Standard indoor lighting
 
-## License
-
-Private / project use.
