@@ -69,7 +69,9 @@ export class FormValidator {
       issues.push('Align shoulders and hips.');
     }
 
-    if (phase === 'bottom_position' || phase === 'moving_up') {
+    // Depth is only meaningful at the bottom. Checking it during moving_up would
+    // fail every rep once elbows extend again (topFormValid stayed false forever).
+    if (phase === 'bottom_position') {
       if (metrics.elbowAngle > this.config.elbowBottomAngle + this.config.hysteresisDegrees) {
         issues.push('Go lower — chest should get closer to the floor.');
       }

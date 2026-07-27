@@ -69,7 +69,7 @@ export class PushUpDetector {
 
     const validation = this.validator.validateAtPhase(frame.landmarks, this.phase);
     this.lastMetrics = validation.metrics;
-    this.advanceState(validation.metrics, validation.isValid, timestamp);
+    this.advanceState(validation.metrics, timestamp);
     this.emitState();
   }
 
@@ -95,7 +95,6 @@ export class PushUpDetector {
 
   private advanceState(
     metrics: NonNullable<PushUpDetectorState['lastMetrics']>,
-    formValid: boolean,
     timestamp: number,
   ) {
     const elbow = metrics.elbowAngle;
@@ -113,7 +112,7 @@ export class PushUpDetector {
       case 'start_position':
         if (elbow <= bottomThreshold + h) {
           if (this.hasMinDuration(timestamp)) {
-            this.bottomFormValid = formValid;
+            this.bottomFormValid = this.isBottomFormOk(metrics);
             this.setPhase('bottom_position', timestamp);
           } else {
             this.setPhase('moving_down', timestamp);
@@ -125,7 +124,7 @@ export class PushUpDetector {
 
       case 'moving_down':
         if (elbow <= bottomThreshold + h) {
-          this.bottomFormValid = formValid;
+          this.bottomFormValid = this.isBottomFormOk(metrics);
           this.setPhase('bottom_position', timestamp);
         }
         break;
@@ -133,7 +132,7 @@ export class PushUpDetector {
       case 'bottom_position':
         if (elbow >= topThreshold - h) {
           if (this.hasMinDuration(timestamp)) {
-            this.topFormValid = formValid;
+            this.topFormValid = this.isTopFormOk(metrics);
             this.setPhase('rep_completed', timestamp);
             this.completeRep(timestamp, metrics);
           } else {
@@ -146,7 +145,7 @@ export class PushUpDetector {
 
       case 'moving_up':
         if (elbow >= topThreshold - h) {
-          this.topFormValid = formValid;
+          this.topFormValid = this.isTopFormOk(metrics);
           this.setPhase('rep_completed', timestamp);
           this.completeRep(timestamp, metrics);
         }
@@ -204,6 +203,24 @@ export class PushUpDetector {
     this.lastRepAt = timestamp;
     this.bottomFormValid = true;
     this.topFormValid = true;
+  }
+
+  private isBottomFormOk(
+    metrics: NonNullable<PushUpDetectorState['lastMetrics']>,
+  ): boolean {
+    return (
+      metrics.elbowAngle <= this.config.elbowBottomAngle + this.config.hysteresisDegrees &&
+      metrics.bodyStraightness >= this.config.minBodyStraightness
+    );
+  }
+
+  private isTopFormOk(
+    metrics: NonNullable<PushUpDetectorState['lastMetrics']>,
+  ): boolean {
+    return (
+      metrics.elbowAngle >= this.config.elbowTopAngle - this.config.hysteresisDegrees &&
+      metrics.bodyStraightness >= this.config.minBodyStraightness
+    );
   }
 
   private hasMinDuration(timestamp: number): boolean {
